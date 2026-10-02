@@ -1,0 +1,155 @@
+#include <Wire.h>
+#include <Keypad.h>
+#include <Servo.h>
+#include <LiquidCrystal_I2C.h>
+
+#define buzzer 11
+#define MAX_PASSWORD_LENGTH 20
+#define LOCK_ANGLE 110
+#define UNLOCK_ANGLE 50
+
+// ---------- Password class ----------
+class Password {
+public:
+  Password(const char* pass) {
+    set(pass);
+    reset();
+  }
+
+  void set(const char* pass) { target = pass; }
+
+  bool append(char character) {
+    if (currentIndex + 1 >= MAX_PASSWORD_LENGTH) return false;
+    guess[currentIndex++] = character;
+    guess[currentIndex] = '\0';  // valid C string
+    return true;
+  }
+
+  void reset() {
+    currentIndex = 0;
+    guess[0] = '\0';
+  }
+
+  bool evaluate() { return strcmp(target, guess) == 0; }
+
+private:
+  const char* target;
+  char guess[MAX_PASSWORD_LENGTH];
+  byte currentIndex;
+};
+
+// ---------- Objects & variables ----------
+Servo servo;
+LiquidCrystal_I2C lcd(0x27, 16, 2);   // agar LCD blank ho to 0x3F try karo
+
+const char PASSCODE[] = "0123";                       // apna password yahan likho
+const byte PASSWORD_LENGTH = sizeof(PASSCODE) - 1;    // auto length
+
+Password password(PASSCODE);
+byte currentPasswordLength = 0;
+bool isLocked = false;   // false = door open (servo 50), true = locked (servo 110)
+
+const byte ROWS = 4;
+const byte COLS = 4;
+
+char keys[ROWS][COLS] = {
+  {'D', 'C', 'B', 'A'},
+  {'#', '9', '6', '3'},
+  {'0', '8', '5', '2'},
+  {'*', '7', '4', '1'},
+};
+
+byte rowPins[ROWS] = {2, 3, 4, 5};
+byte colPins[COLS] = {6, 7, 8, 9};
+
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+// ---------- Helper functions ----------
+void beep(int times, int ms) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(buzzer, HIGH);
+    delay(ms);
+    digitalWrite(buzzer, LOW);
+    if (times > 1) delay(ms);
+  }
+}
+
+void showPrompt() {
+  lcd.clear();
+  lcd.setCursor(1, 0);
+  lcd.print("ENTER PASSWORD");
+}
+
+void resetPassword() {
+  password.reset();
+  currentPasswordLength = 0;
+  showPrompt();
+}
+
+void checkPassword() {
+  lcd.clear();
+  if (password.evaluate()) {
+    beep(1, 300);
+    lcd.setCursor(0, 0);
+    lcd.print("CORRECT PASSWORD");
+    if (isLocked) {
+      servo.write(UNLOCK_ANGLE);
+      lcd.setCursor(2, 1);
+      lcd.print("DOOR OPENED");
+      isLocked = false;
+    } else {
+      servo.write(LOCK_ANGLE);
+      lcd.setCursor(2, 1);
+      lcd.print("DOOR LOCKED");
+      isLocked = true;
+    }
+  } else {
+    beep(3, 200);
+    lcd.setCursor(0, 0);
+    lcd.print("WRONG PASSWORD!");
+    lcd.setCursor(0, 1);
+    lcd.print("PLEASE TRY AGAIN");
+  }
+  delay(2000);
+  resetPassword();
+}
+
+void processNumberKey(char key) {
+  lcd.setCursor(6 + currentPasswordLength, 1);
+  lcd.print('*');
+  currentPasswordLength++;
+  password.append(key);
+
+  if (currentPasswordLength == PASSWORD_LENGTH) {
+    checkPassword();
+  }
+}
+
+// ---------- Setup & loop ----------
+void setup() {
+  Serial.begin(9600);
+  pinMode(buzzer, OUTPUT);
+  servo.attach(10);
+  servo.write(UNLOCK_ANGLE);
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(3, 0);
+  lcd.print("WELCOME TO");
+  lcd.setCursor(0, 1);
+  lcd.print("DOOR LOCK SYSTEM");
+  delay(3000);
+
+  showPrompt();
+}
+
+void loop() {
+  char key = keypad.getKey();
+  if (key != NO_KEY) {
+    if (key == 'C') {
+      resetPassword();                       // C = clear
+    } else if (key >= '0' && key <= '9') {
+      processNumberKey(key);                 // sirf digits accept honge
+    }
+  }
+}
